@@ -13,7 +13,8 @@ def getSparkSessionInstance(sparkConf):
 
 def sentimentAnalyze():
 	#rdd = sc.textFile("/ccga/SentimentAnalysisDataset.csv")
-	rdd = sc.textFile("/ccga/Subset100k.csv")
+	'''#################################################FIRST DATA SET#################################################'''
+	rdd = sc.textFile("/ccga/SentimentTrain60k.csv")
 	r = rdd.mapPartitions(lambda x: csv.reader(x))
 	parts = r.map(lambda x: Row(sentence=str.strip(x[3]), label=int(x[1])))
 	spark = getSparkSessionInstance(rdd.context.getConf())
@@ -41,6 +42,24 @@ def sentimentAnalyze():
 	lr = LogisticRegression(maxIter=1000, regParam=0.001, elasticNetParam=0.0001)
 	lrModel = lr.fit(final_train_data)
 	lrModel.transform(final_train_data).show()
+	'''#################################################FIRST DATA SET#################################################'''
+
+	'''#################################################SECOND DATA SET#################################################'''
+	rdd2 = sc.textFile("/ccga/SentimentTest40k.csv")
+	r2 = rdd2.mapPartitions(lambda x: csv.reader(x))
+	parts2 = r2.map(lambda x: Row(sentence=str.strip(x[3]), label=int(x[1])))
+	spark2 = getSparkSessionInstance(rdd2.context.getConf())
+	partsDF2 = spark.createDataFrame(parts2)
+	tokenized2 = tokenizer.transform(partsDF2)
+	base_words = remover.transform(tokenized2)
+	train_data_raw2 = base_words.select("base_words", "label")
+	word2Vec2 = Word2Vec(vectorSize=3, minCount=0, inputCol="base_words", outputCol="features")
+	model2 = word2Vec2.fit(train_data_raw2)
+	final_train_data2 = model2.transform(train_data_raw2)
+	final_train_data2 = final_train_data2.select("label", "features")
+	predict = lrModel.transform(final_train_data2)
+	predict.show()
+	'''#################################################SECOND DATA SET#################################################'''
 	print("-------------------------------------------Working perfect-------------------------------------------")
 
 if __name__ == "__main__":
