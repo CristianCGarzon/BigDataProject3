@@ -20,37 +20,22 @@ os.environ['PYSPARK_SUBMIT_ARGS'] = '--jars $SPARK_HOME/jars/spark-streaming-kaf
 
 def getSparkSessionInstance(sparkConf):
     if ('sparkSessionSingletonInstance' not in globals()):
-        globals()['sparkSessionSingletonInstance'] = SparkSession.builder.config(conf=sparkConf).getOrCreate()
+        globals()['sparkSessionSingletonInstance'] = SparkSession.builder.config(conf=sparkConf).enableHiveSupport().getOrCreate()
     return globals()['sparkSessionSingletonInstance']
 
 def consumer():
-    context = StreamingContext(sc, 30)
+    context = StreamingContext(sc, 60)
     dStream = KafkaUtils.createDirectStream(context, ["project3"], {"metadata.broker.list": "localhost:9092"})
     dStream.foreachRDD(prediction)
     context.start()
     context.awaitTermination()
 
-def insertUsers(users, spark, time):
-    if users:
-        rddUsers = sc.parallelize(users)
-        # Convert RDD[String] to RDD[Row] to DataFrame
-        usersDataFrame = spark.createDataFrame(rddUsers.map(lambda x: Row(screenName=x, hora=time)))
-        usersDataFrame.createOrReplaceTempView("users")
-        usersDataFrame = spark.sql("use bigdata")
-        usersDataFrame = spark.sql("select screenName, hora from users limit 50")
-        usersDataFrame.write.mode("append").saveAsTable("users")
-        print("Inserted Users FINISH")
-    else:
-        print("Is not Users avaliables to insert in hive")
-
-def prediction(time,rdd):
-    rdd = rdd.map(lambda x: json.loads(x[1]))
-    rdd = rdd.collect()
-    rdd = sc.parallelize(rdd)
-    rdd.foreach(print)
+def trainData():
+    #rdd = sc.parallelize(rdd)
+    #rdd.foreach(print)
     #rdd = sc.textFile("/ccga/SentimentAnalysisDataset.csv")
     '''#################################################TRAINING DATA SET#################################################'''
-    '''rddTrain = sc.textFile("/ccga/SentimentTrain60k.csv")
+    rddTrain = sc.textFile("/ccga/set100k.csv")
     r = rddTrain.mapPartitions(lambda x: csv.reader(x))
     parts = r.map(lambda x: Row(sentence=str.strip(x[3]), label=int(x[1])))
     spark = getSparkSessionInstance(rddTrain.context.getConf())
@@ -78,31 +63,51 @@ def prediction(time,rdd):
     lr = LogisticRegression(maxIter=1000, regParam=0.001, elasticNetParam=0.0001)
     lrModel = lr.fit(final_train_data)
     trained = lrModel.transform(final_train_data)
+    return lrModel
     '''#################################################TRAINING DATA SET#################################################'''
 
-    '''rdd2 = rdd.map(lambda x: json.loads(x[1]))
-    rdd2 = rdd2.collect()
-    rdd2 = sc.parallelize(rdd2)
+def prediction(time,rdd):
+    rdd2 = rdd.map(lambda x: json.loads(x[1]))
+    rdd2 = rdd2.map(lambda x: str.strip(x["text"])).map(lambda x: x.lower())
+    rdd2 = rdd2.map(lambda x: x.replace('.','')).map(lambda x: x.replace('(','')).map(lambda x: x.replace(')','')).map(lambda x: x.replace('!','')).map(lambda x: x.replace('|','')).map(lambda x: x.replace('!',''))
+    rdd2 = rdd2.map(lambda x: x.replace('...','')).map(lambda x: x.replace('?','')).map(lambda x: x.replace(';','')).map(lambda x: x.replace('"','')).map(lambda x: x.replace('/','')).map(lambda x: x.replace(',',''))
+    rdd2 = rdd2.map(lambda x: x.replace('~','')).map(lambda x: x.replace('{','')).map(lambda x: x.replace('}','')).map(lambda x: x.replace('-','')).map(lambda x: x.replace('`',''))
+    rdd2 = rdd2.map(lambda x: ' '.join(filter(lambda x: x.startswith(('@','http','"','&','rt')) == False, x.split())))
 
-    #rdd2 = sc.textFile("/ccga/SentimentTest40k.csv")
-    #r2 = rdd2.mapPartitions(lambda x: csv.reader(x))
-    parts2 = rdd2.map(lambda x: Row(text=x["text"].lower(), palabra="prueba"))
+    maga = rdd2.filter(lambda x: "maga" in x).map(lambda x: [x, "maga"])
+    dictator = rdd2.filter(lambda x: "dictator" in x).map(lambda x: [x, "dictator"])
+    impeach = rdd2.filter(lambda x: "impeach" in x).map(lambda x: [x, "impeach"])
+    drain = rdd2.filter(lambda x: "drain" in x).map(lambda x: [x, "drain"])
+    swamp = rdd2.filter(lambda x: "swamp" in x).map(lambda x: [x, "swamp"])
+    comey = rdd2.filter(lambda x: "comey" in x).map(lambda x: [x, "comey"])
+    rdd3 = maga.union(dictator).union(impeach).union(drain).union(swamp).union(comey)
+
+    parts2 = rdd3.map(lambda x: Row(text=x[0], keyword=x[1], dateTime = time))
     spark2 = getSparkSessionInstance(rdd2.context.getConf())
     partsDF2 = spark2.createDataFrame(parts2)
-    tokenizer2 = Tokenizer(inputCol="sentence", outputCol="words")
+    tokenizer2 = Tokenizer(inputCol="text", outputCol="words")
     tokenized2 = tokenizer2.transform(partsDF2)
     remover2 = StopWordsRemover(inputCol="words", outputCol="base_words")
     base_words = remover2.transform(tokenized2)
-    train_data_raw2 = base_words.select("base_words", "text", "palabra")
-    final_train_data2 = model.transform(train_data_raw2)
-    final_train_data2 = final_train_data2.select("text", "features", "palabra")
+    train_data_raw2 = base_words.select("base_words", "text", "keyword", "dateTime")
+    word2Vec2 = Word2Vec(vectorSize=3, minCount=0, inputCol="base_words", outputCol="features")
+    model2 = word2Vec2.fit(train_data_raw2)
+    final_train_data2 = model2.transform(train_data_raw2)
+    final_train_data2 = final_train_data2.select("text", "features", "keyword", "dateTime")
     predict = lrModel.transform(final_train_data2)
-    #trained.show()
     predict.show()
+    predict = predict.createOrReplaceTempView("prediction_tweets")
+    predict = spark2.sql("use bigdata")
+    predict = spark2.sql("select keyword, prediction, dateTime, count(*) as total from prediction_tweets group by keyword, prediction, dateTime")
+    predict.write.mode("append").saveAsTable("prediction_tweets")
+    print("Ipredictnserted in Prediction table FINISH TIME: ", time)
+
+    #predict.filter("prediction = 0").show()
     '''#################################################SECOND DATA SET#################################################'''
     print("-------------------------------------------Working perfect-------------------------------------------")
 
 if __name__ == "__main__":
     print("Starting to read tweets")
-    sc = SparkContext(appName="Consumer")
+    sc = SparkContext(appName="ConsumerProject3")
+    lrModel = trainData()
     consumer()
